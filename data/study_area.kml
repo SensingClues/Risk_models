@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Schema name="study_area" id="study_area">
+	<SimpleField name="dummy" type="float"></SimpleField>
+</Schema>
+<Folder><name>study_area</name>
+  <Placemark>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+	<ExtendedData><SchemaData schemaUrl="#study_area">
+		<SimpleData name="dummy">0</SimpleData>
+	</SchemaData></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>38.5656002574968,-3.40067210960785 39.0507969259467,-3.72778232544531 38.9606089071032,-3.96521703112137 38.6658118015288,-4.15094500725359 38.4665705246224,-3.81428017969843 38.1435178816821,-3.74372486255929 38.1408464742718,-3.56777080922745 38.5656002574968,-3.40067210960785</coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+</Folder>
+</Document></kml>
