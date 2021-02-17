@@ -1,6 +1,9 @@
 # Get data splits (train and test set) for the location grid cells.
 # Preprocess the data (removing NAs etc.).
 # Train the model, also performing cross-validation.
+# Use the final model to create an incident likelihood map.
+# Measure model performance on the test set.
+# Explore the relationship of the features with the dependent variable (incident yes/no).
 
 
 # GIS libraries
@@ -132,3 +135,94 @@ mod_glm <-map2_df(.x = l_cv$splits,
 mod_glm %>% group_by(fold) %>%
   metrics(truth, .pred_Class)
 
+
+#------------------------------------------------------------
+# create incident likelihood map
+#------------------------------------------------------------
+out <- raster('output/raster_template.grd')
+
+# preprocess all input locations
+dim(inputs)
+baked_all <- bake(recipe, inputs %>% select(-incident))
+dim(baked_all)
+
+# predict charcoaling likelihood at each location
+preds_aoi <- predict(mod_final, new_data = baked_all, type = "prob") # get probabilities
+
+preds_aoi <- cbind(preds_aoi, cell_id =baked_all$cell_id)
+head(preds_aoi)
+
+
+# visualize likelihood map
+out[] <- NA
+out[preds_aoi$cell_id] <- preds_aoi$.pred_Charcoal
+plot(out, main = 'Charcoaling likelihood')
+
+# charcoaling classification map
+preds_aoi <- mutate(preds_aoi, class = ifelse(.pred_Charcoal > 0.5, 1, 0))
+
+out[preds_aoi$cell_id] <- preds_aoi$class
+plot(out, legend = FALSE, col = c('lightblue', 'darkblue'), 
+     main = 'Charcoaling classification')
+legend("bottomleft", legend = c("not_likely", "likely"),
+       title = 'Charcoaling incident', fill = c('lightblue', 'darkblue'))
+
+
+#------------------------------------------------------------
+# measure model performance on the test set
+#------------------------------------------------------------
+
+test <- read.csv('output/location_features_test.csv') %>% 
+  filter(incident == 1)
+
+test_pred <- cbind(test, pred = preds_aoi$class[test$cell_id]) # check if cbind() works like this
+head(test_pred)
+names(test_pred) <- c('cell_id', 'truth', 'prediction')
+table(test_pred %>% select(-cell_id)) # NAs in pred!
+dim(test_pred %>% filter(incident == pred))
+
+
+#------------------------------------------------------------
+# explore features
+#------------------------------------------------------------
+
+# dem
+par(mfrow = c(2,2))
+hist(inputs$elevation_m[inputs$incident == 1], breaks = seq(100, 1600, 30), main = 'Incident locations')
+hist(inputs$elevation_m[inputs$incident == 0], breaks = seq(100, 1600, 30), main = 'Pseudo-absence locations')
+hist(inputs$elevation_m, breaks = seq(100, 1600, 30), main = 'Complete area of interest')
+par(mfrow = c(1,1))
+
+# dwater
+par(mfrow = c(2,2))
+hist(inputs$dwater[inputs$incident == 1], breaks = seq(0, 50000, 1000), main = 'Incident locations')
+hist(inputs$dwater[inputs$incident == 0], breaks = seq(0, 50000, 1000), main = 'Pseudo-absence locations')
+hist(inputs$dwater, breaks = seq(0, 50000, 1000), main = 'Complete area of interest')
+par(mfrow = c(1,1))
+
+
+hist_f <- function(variable){
+  par(mfrow = c(2,2))
+  hist(inputs$variable[inputs$incident == 1], breaks = seq(100, 1600, 30), main = 'Incident locations')
+  hist(inputs$variable[inputs$incident == 0], breaks = seq(100, 1600, 30), main = 'Pseudo-absence locations')
+  hist(inputs$variable, breaks = seq(100, 1600, 30), main = 'Complete area of interest')
+  par(mfrow = c(1,1))
+}
+
+hist_f(elevation_m)
+
+
+# # check relation elevation ~ charcoaling probability
+# train$elevation_bin <- ifelse(train$elevation_m>400,
+#                           ifelse(train$elevation_m>550,
+#                              ifelse(train$elevation_m>700,
+#                                   ifelse(train$elevation_m>850,4,3),2),1),0)
+# train$incident_num <- 2 - as.numeric(train$incident) # check which category got a 0 and which a 1
+# 
+# aggregate(incident_num~elevation_bin, data=train, FUN=mean)
+# 
+# preds <- predict(mod_basic, new_data = baked_train, type = "prob")
+# preds$truth <- baked_train$incident
+#   
+# plot(baked_train$elevation_m, preds$.pred_Charcoal)
+# plot(baked_train$dwater, preds$.pred_Charcoal)
