@@ -28,9 +28,13 @@ plot(out)
 folder <- 'data/Sentinel_2/'
 aoi <- readOGR(dsn = "data", layer = "study_area")
 
-# EO browser
+# load Sentinel-2 images (retrieved from EO browser)
 b04_stack <- stack(paste0(folder, list.files(folder, 'L2A_B04')))
 b08_stack <- stack(paste0(folder, list.files(folder, 'L2A_B08')))
+classified_stack <- stack(paste0(folder, list.files(folder, 'classification')), bands = 1)
+
+# check equal nlayers()
+nlayers(b04_stack) == nlayers(b08_stack) & nlayers(b04_stack) == nlayers(classified_stack)
 
 ndvi_stack <- stack()
 ndvi_names <- NULL
@@ -41,18 +45,29 @@ for (i in 1:length(names(b04_stack))) {
     print(paste0(i, ' out of ', length(names(b04_stack))))
     ndvi_names <- c(ndvi_names, date_b04)
     new_ndvi <- (b08_stack[[i]] - b04_stack[[i]])/(b08_stack[[i]] + b04_stack[[i]])
+    
+    # using sentinel classification to replace cloud pixels with NA value for NDVI
+    # value 65535 = cloud high probability
+    # value 49345 = cloud medium probability
+    cl <- classified_stack[[i]]
+    cl[cl == 65535] <- NA
+    cl[cl == 49345] <- NA
+    new_ndvi <- mask(new_ndvi, cl)
+    
     ndvi_stack <- addLayer(ndvi_stack, new_ndvi)
   }
 }
 names(ndvi_stack) <- ndvi_names
 
-plot(ndvi_stack)
+plot(ndvi_stack[[1]])
+
+# remove large objects
+remove(b04_stack, b08_stack, classified_stack)
 
 
 # reproject to res/crs of output raster
 ndvi_stack <- projectRaster(ndvi_stack, to = out, method = 'bilinear')
 plot(ndvi_stack[[1]])
-plot(ndvi_stack)
 
 
 #---------------------------------
