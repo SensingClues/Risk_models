@@ -113,101 +113,136 @@ map
 # tracks data collection
 #------------------------------------------------------------
 
-if (as.Date(str_sub(dt.range, start = 42, end = 51)) < as.Date("2020-01-01"))
-  
-  
-TRACKS_ALL <- NULL
+TRACKS <- NULL
 
-# for each file in each folder:
-
-FOLDERS <- list.dirs()
-FOLDERS <- FOLDERS[grepl('tracks/ST', FOLDERS, fixed = TRUE)]
-for (j in 1:length(FOLDERS)) {
-  print(paste0('folder: ', j))
-  files <- list.files(FOLDERS[j])[-1]
-  files <- substr(files,1,nchar(files)-4)
-  for (i in 1:length(files)) {
-    FILENAME <- paste(FOLDERS[j],"/",files[i],".LOG",sep="")
-    track <- read.table(FILENAME,skip=1)
-    track <- as.character(track[substring(track$V1,1,6)=="$GPGGA",])
-    TRACK <- NULL
-    for(a in 1:length(track)) {
-      TRACK <- rbind(TRACK,strsplit(track[a],",")[[1]])
+# tracks before 2020 are stored locally, tracks from 2020 onwards are in Focus
+if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
+  print('Retrieving tracks from locally stored files.')
+  
+  # for each file in each folder:
+  FOLDERS <- list.dirs()
+  FOLDERS <- FOLDERS[grepl('tracks/ST', FOLDERS, fixed = TRUE)]
+  for (j in 1:length(FOLDERS)) {
+    print(paste0('folder ', j, ' out of ', length(FOLDERS)))
+    files <- list.files(FOLDERS[j])[-1]
+    files <- substr(files,1,nchar(files)-4)
+    for (i in 1:length(files)) {
+      FILENAME <- paste(FOLDERS[j],"/",files[i],".LOG",sep="")
+      track <- read.table(FILENAME,skip=1)
+      track <- as.character(track[substring(track$V1,1,6)=="$GPGGA",])
+      TRACK <- NULL
+      for(a in 1:length(track)) {
+        TRACK <- rbind(TRACK,strsplit(track[a],",")[[1]])
+      }
+      TRACK <- as.data.frame(TRACK)
+      # only use tracks with more than 5 recordings
+      if (dim(TRACK)[1] >= 5){
+        names(TRACK) <- c("SentenceID","Time","Latitude","N_or_S","Longitude","E_or_W","FixQuality",
+                          "NofSatellites","HDOP","Altitude","Altitude_unit","HeightAbvWGS84","unit","DGPSref","Checksum")
+        TRACK$Time <- as.numeric(as.character(TRACK$Time))
+        TRACK$Latitude <- as.numeric(as.character(TRACK$Latitude))
+        TRACK$Longitude <- as.numeric(as.character(TRACK$Longitude))
+        TRACK$Altitude <- as.numeric(as.character(TRACK$Altitude))
+        
+        TRACK$ID <- FILENAME
+        TRACK$Year <- as.numeric(paste("20",substr(files[i],2,3),sep=""))
+        TRACK$Month <- as.numeric(substr(files[i],4,5))
+        TRACK$Day <- as.numeric(substr(files[i],6,7))
+        TRACK$Hour <- TRACK$Time %/% 10000
+        TRACK$Minute <- TRACK$Time %% 10000
+        TRACK$Second <- TRACK$Minute %% 100
+        TRACK$Minute <- TRACK$Minute %/% 100
+        TRACK$Time <- as.POSIXct(paste0(TRACK$Year,"-",TRACK$Month,"-",TRACK$Day," ",
+                                        TRACK$Hour,":",TRACK$Minute,":",TRACK$Second),tz="UTC")
+        # ----------------
+        # # Fix date when time passes midnight
+        # TRACK$dTIME <- NA
+        # TRACK$dTIME[2:nrow(TRACK)] <- TRACK$Time[2:nrow(TRACK)]-TRACK$Time[2:nrow(TRACK)-1]
+        # newID <- c(TRUE,!TRACK$ID[2:nrow(TRACK)] == TRACK$ID[2:nrow(TRACK)-1])
+        # DateChange <- TRACK$dTIME < 0 & !is.na(TRACK$dTIME)&!newID
+        # i <- 1
+        # while(!i > nrow(TRACK)) {
+        #   if (newID[i]) {
+        #     check <- FALSE
+        #   }
+        #   if (DateChange[i]) {
+        #     check <- TRUE
+        #     print(TRACK$Time[i])
+        #   }
+        #   if (check) {DateChange[i] <- TRUE}
+        #   
+        #   i <- i + 1
+        #   #print(i)
+        # }
+        # TRACK$Time[DateChange] <- TRACK$Time[DateChange] + 60*60*24
+        # TRACK$dTIME[2:nrow(TRACK)] <- TRACK$Time[2:nrow(TRACK)]-TRACK$Time[2:nrow(TRACK)-1]
+        # TRACK$dTIME[newID] <- NA
+        # ---------------
+        
+        # get longitude and latitude in WGS84 format
+        testLat <- TRACK$Latitude%/%100+TRACK$Latitude%%100/60
+        testLong <- TRACK$Longitude%/%100+TRACK$Longitude%%100/60
+        testLat[TRACK$N_or_S=="S"] <- -testLat[TRACK$N_or_S=="S"]
+        
+        TRACK$long <- testLong
+        TRACK$lat <- testLat
+        testLong[TRACK$E_or_W=="W"] <- -testLong[TRACK$E_or_W=="W"]
+        
+        # downsample track records to once every 10 min
+        TRACK$dMINUTE <- NA
+        TRACK$dMINUTE[2:nrow(TRACK)] <- TRACK$Minute[2:nrow(TRACK)]-TRACK$Minute[2:nrow(TRACK)-1]
+        # keep every 10th minute of the hour, remove double recordings per minute
+        Include <- TRACK$Minute %% 10 == 0 & (TRACK$dMINUTE != 0 | is.na(TRACK$dMINUTE))
+        TRACK <- TRACK[Include,]
+        
+        # remove unuseful columns
+        TRACK <- dplyr::select(TRACK, c('ID', 'long', 'lat', 'Time'))
+        
+        TRACKS <- rbind(TRACKS,TRACK)
+      }
+      
     }
-    TRACK <- as.data.frame(TRACK)
-    names(TRACK) <- c("SentenceID","Time","Latitude","N_or_S","Longitude","E_or_W","FixQuality",
-                      "NofSatellites","HDOP","Altitude","Altitude_unit","HeightAbvWGS84","unit","DGPSref","Checksum")
-    TRACK$Time <- as.numeric(as.character(TRACK$Time))
-    TRACK$Latitude <- as.numeric(as.character(TRACK$Latitude))
-    TRACK$Longitude <- as.numeric(as.character(TRACK$Longitude))
-    TRACK$Altitude <- as.numeric(as.character(TRACK$Altitude))
     
-    TRACK$ID <- FILENAME
-    TRACK$Year <- as.numeric(paste("20",substr(files[i],2,3),sep=""))
-    TRACK$Month <- as.numeric(substr(files[i],4,5))
-    TRACK$Day <- as.numeric(substr(files[i],6,7))
-    TRACK$Hour <- TRACK$Time %/% 10000
-    TRACK$Minute <- TRACK$Time %% 10000
-    TRACK$Second <- TRACK$Minute %% 100
-    TRACK$Minute <- TRACK$Minute %/% 100
-    TRACK$Time <- as.POSIXct(paste0(TRACK$Year,"-",TRACK$Month,"-",TRACK$Day," ",
-                                    TRACK$Hour,":",TRACK$Minute,":",TRACK$Second),tz="UTC")
-    # ----------------
-    # # Fix date when time passes midnight
-    # TRACK$dTIME <- NA
-    # TRACK$dTIME[2:nrow(TRACK)] <- TRACK$Time[2:nrow(TRACK)]-TRACK$Time[2:nrow(TRACK)-1]
-    # newID <- c(TRUE,!TRACK$ID[2:nrow(TRACK)] == TRACK$ID[2:nrow(TRACK)-1])
-    # DateChange <- TRACK$dTIME < 0 & !is.na(TRACK$dTIME)&!newID
-    # i <- 1
-    # while(!i > nrow(TRACK)) {
-    #   if (newID[i]) {
-    #     check <- FALSE
-    #   }
-    #   if (DateChange[i]) {
-    #     check <- TRUE
-    #     print(TRACK$Time[i])
-    #   }
-    #   if (check) {DateChange[i] <- TRUE}
-    #   
-    #   i <- i + 1
-    #   #print(i)
-    # }
-    # TRACK$Time[DateChange] <- TRACK$Time[DateChange] + 60*60*24
-    # TRACK$dTIME[2:nrow(TRACK)] <- TRACK$Time[2:nrow(TRACK)]-TRACK$Time[2:nrow(TRACK)-1]
-    # TRACK$dTIME[newID] <- NA
-    # ---------------
-    
-    # get longitude and latitude in WGS84 format
-    testLat <- TRACK$Latitude%/%100+TRACK$Latitude%%100/60
-    testLong <- TRACK$Longitude%/%100+TRACK$Longitude%%100/60
-    testLat[TRACK$N_or_S=="S"] <- -testLat[TRACK$N_or_S=="S"]
-    
-    TRACK$long <- testLong
-    TRACK$lat <- testLat
-    testLong[TRACK$E_or_W=="W"] <- -testLong[TRACK$E_or_W=="W"]
-    
-    # downsample track records to once every 10 min
-    TRACK$dMINUTE <- NA
-    TRACK$dMINUTE[2:nrow(TRACK)] <- TRACK$Minute[2:nrow(TRACK)]-TRACK$Minute[2:nrow(TRACK)-1]
-    # keep every 10th minute of the hour, remove double recordings per minute
-    Include <- TRACK$Minute %% 10 == 0 & (TRACK$dMINUTE != 0 | is.na(TRACK$dMINUTE))
-    TRACK <- TRACK[Include,]
-    
-    # remove unuseful columns
-    TRACK <- dplyr::select(TRACK, c('ID', 'long', 'lat', 'Time'))
-  
-    TRACKS_ALL <- rbind(TRACKS_ALL,TRACK)
   }
   
+} else { # if From Date >= 2020-01-01
+  print('Retrieving tracks from Focus.')
+  
+  url.tracks <- paste0(URL,"api/map/all/track/0/features")
+  q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', bounds, '"drawings":[]},
+  "dateTimeRange":', dt.range,'}}')
+  trackDATA.L <- POST(url.tracks, body=q, encode="raw", content_type_json())
+  trackDATA <- content(trackDATA.L)
+  Ntracks <- length(trackDATA$features)
+  
+  if(Ntracks!=0) {
+    print("Unpacking tracks (this may take a while...)")
+    for (i in 1:Ntracks) {
+      # get the detailed coordinates of the tracks
+      coords <- as.numeric(unlist(trackDATA$features[[i]]$geometry)[-1])
+      coords <- t(matrix(unlist(coords),nrow=2,ncol=length(coords)))
+      coords <- data.frame(coords)
+      names(coords) <- c("lon","lat")
+      TRACKS <- rbind(TRACKS,coords)
+    }
+    print("Successfully loaded the tracks")
+    
+  } else {
+    print("no tracks found")
+  }
 }
 
 # convert tracks to spatial object
-coordinates(TRACKS_ALL) <- ~long+lat
-crs(TRACKS_ALL) <- crs('+proj=longlat +ellps=WGS84 +no_defs')
-TRACKS.T <- spTransform(TRACKS_ALL, crs("+proj=utm +zone=37 +south +datum=WGS84 +units=m +no_defs"))
+if(!is.null(TRACKS)) {
+  coordinates(TRACKS) <- ~lon+lat
+  crs(TRACKS) <- crs('+proj=longlat +ellps=WGS84 +no_defs')  
+  TRACKS.T <- spTransform(TRACKS, crs("+proj=utm +zone=37 +south +datum=WGS84 +units=m +no_defs"))
+} else {
+  print("all tracks skipped, no valid tracks loaded")
+}
 
-min(TRACKS_ALL$Time)
-max(TRACKS_ALL$Time)
+min(TRACKS$Time)
+max(TRACKS$Time)
 
 # check tracks data
 TRACKS_subset <- TRACKS.T[sample(1:nrow(TRACKS.T),5000),]
