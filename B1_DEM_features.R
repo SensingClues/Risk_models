@@ -17,24 +17,25 @@ library(ggplot2)
 df <- read.csv('output/location_features.csv')
 
 
-#---------------------------------
+#------------------------------------------------------------
 # load, reproject and mask DEM
-#---------------------------------
+#------------------------------------------------------------
 # area of interest
 aoi <- readOGR(dsn = "data", layer = "study_area")
 
 out <- raster('output/raster_template.grd')
 
 # merge DEM tiles, mask them for the aoi and reproject them to desired resolution/crs (out)
-dem_aoi <- raster('data/s04_e038_1arc_v3.tif') %>% 
-  merge(raster('data/s05_e038_1arc_v3.tif')) %>% 
-  merge(raster('data/s04_e039_1arc_v3.tif')) %>% 
-  crop(aoi) %>% 
-  mask(aoi) %>% 
+dem_aoi <- raster('data/dem_s04_e038_1arc_v3.tif') %>% 
+  merge(raster('data/dem_s05_e038_1arc_v3.tif')) %>% 
+  merge(raster('data/dem_s04_e039_1arc_v3.tif')) %>% 
+  crop(extent(aoi) + 0.1) %>% # slightly larger extent necessary for slope/aspect calculations
   # a 7x7 matrix is the smallest focal window resulting in no NAs in 1000m DEM
-  focal(w=matrix(1,7,7), fun=mean, NAonly=TRUE, na.rm=TRUE) %>% 
-  projectRaster(to = out, method = 'bilinear')
+  focal(w=matrix(1,7,7), fun=mean, NAonly=TRUE, na.rm=TRUE)
+  
 plot(dem_aoi)
+plot(aoi, add = TRUE)
+
 
 # looking at a smaller area within the aoi:
 # plot(crop(dem_aoi, extent(dem_aoi, 350, 550, 1500, 1700)))
@@ -45,15 +46,43 @@ plot(dem_aoi)
 # dem_aoi <- raster(paste0('data/', list.files('data', 'DEM')))
 
 
-#---------------------------------
-# extract DEM values at incident 
-# locations (with cell numbers)
-#---------------------------------
+#------------------------------------------------------------
+# create terrain rasters from DEM (e.g. slope)
+#------------------------------------------------------------
+
+# slope in degrees
+slp_aoi <- terrain(dem_aoi, opt = 'slope', unit = 'degrees')
+plot(slp_aoi)
+
+# aspect (values from 1 to 6, wind directions)
+asp_aoi <- terrain(dem_aoi, opt = 'aspect')
+plot(asp_aoi)
+
+
+# reproject all rasters
+dem_aoi <- projectRaster(dem_aoi, to = out, method = 'bilinear') # get same crs, res and extent as out
+slp_aoi <- projectRaster(slp_aoi, to = out, method = 'bilinear')
+asp_aoi <- projectRaster(asp_aoi, to = out, method = 'bilinear')
+
+
+#------------------------------------------------------------
+# extract raster values at incident locations (with cell numbers)
+#------------------------------------------------------------
 
 dem_vals <- raster::extract(dem_aoi, df$cell_id)
+slp_vals <- raster::extract(slp_aoi, df$cell_id)
+asp_vals <- raster::extract(asp_aoi, df$cell_id)
 
-features <- cbind(df, elevation_m = dem_vals)
 
+features <- cbind(df, elevation_m = dem_vals) %>% 
+  cbind(slope_deg = slp_vals) %>% 
+  cbind(aspect = asp_vals)
+summary(features)
+
+
+#------------------------------------------------------------
+# visualizations of the DEM-related features
+#------------------------------------------------------------
 
 # compare histograms
 par(mfrow = c(2,2))
@@ -67,30 +96,6 @@ par(mfrow = c(1,1))
 # with ggplot instead
 # ggplot(features, aes(elevation_m)) +
 #   geom_histogram(binwidth = 25, na.rm = TRUE)
-
-
-#---------------------------------
-# other DEM related features at 
-# incident locations
-#---------------------------------
-
-# slope in degrees
-slp_aoi <- terrain(dem_aoi, opt = 'slope', unit = 'degrees')
-plot(slp_aoi)
-
-slp_vals <- raster::extract(slp_aoi, df$cell_id)
-
-
-# aspect (values from 1 to 6, wind directions)
-asp_aoi <- terrain(dem_aoi, opt = 'aspect')
-plot(asp_aoi)
-
-asp_vals <- raster::extract(asp_aoi, df$cell_id)
-
-
-features <- cbind(features, slope_deg = slp_vals) %>% 
-  cbind(aspect = asp_vals)
-
 
 
 # compare histograms for slope
@@ -108,7 +113,6 @@ hist(features$aspect[features$incident == 0], breaks = seq(0, 6.5, 0.25), main =
 # compare to DEM values in complete aoi
 hist(values(asp_aoi), breaks = seq(0, 6.5, 0.25), main = 'Complete area of interest')
 par(mfrow = c(1,1))
-
 
 
 # visualize the DEM raster on a map
