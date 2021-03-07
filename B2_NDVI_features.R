@@ -80,9 +80,14 @@ sentinel2_index <- function(name1, name2, sent2_path, cloudmask = TRUE){
 ndvi_stack <- sentinel2_index('L2A_B08', 'L2A_B04', sent2_path = folder)
 plot(ndvi_stack[[1]])
 
+# moisture index (NDMI)
+ndmi_stack <- sentinel2_index('L2A_B8A', 'L2A_B11', sent2_path = folder)
+plot(ndmi_stack[[1]])
+
 
 # reproject to res/crs of output raster
 ndvi_stack <- projectRaster(ndvi_stack, to = out, method = 'bilinear')
+ndmi_stack <- projectRaster(ndmi_stack, to = out, method = 'bilinear')
 
 
 #------------------------------------------------------------
@@ -104,8 +109,20 @@ ndvi_m <- rowMeans(ndvi_vals, na.rm = TRUE)
 ndvi_mx <- rowMaxs(ndvi_vals, na.rm = TRUE) # max because clouds give low NDVI
 
 
+# NDMI
+
+ndmi_vals <- raster::extract(ndmi_stack,  df$cell_id)
+
+# get ndmi min and mean
+ndmi_m <- rowMeans(ndmi_vals, na.rm = TRUE)
+ndmi_mn <- rowMins(ndmi_vals, na.rm = TRUE) # min because clouds give high NDMI
+
+
+
 features <- cbind(df, ndvi_mean = ndvi_m) %>% 
-  cbind(ndvi_max = ndvi_mx)
+  cbind(ndvi_max = ndvi_mx) %>% 
+  cbind(ndmi_mean = ndmi_m) %>% 
+  cbind(ndmi_min = ndmi_mn)
 summary(features)
 
 
