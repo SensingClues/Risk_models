@@ -1,8 +1,8 @@
-# Retrieve Sentinel-2 band 4 (red) and band 8 (NIR) rasters.
-# Derive NDVI rasters from the bands and reproject them to the 
-# desired output raster crs and dimensions.
-# Extract the NDVI time series of 2020 at the locations of interest
-# and get NDVI maximum and mean values per location.
+# Retrieve Sentinel-2 imagery as raster objects.
+# Derive indices (e.g. NDVI) from the bands and reproject them 
+# to the desired output raster crs and dimensions.
+# Extract the index time series of 2020 at the locations of interest
+# and get index maximum and mean values per location.
 
 
 # GIS libraries
@@ -14,83 +14,100 @@ library(leaflet)
 library(tidyverse)
 library(ggplot2)
 library(Rfast)
+library(matrixStats)
 
 
 df <- read.csv('output/location_features.csv')
 
-out <- raster('output/raster_template.grd')
-plot(out)
-
-#---------------------------------
-# create NDVI time series RasterStack 
-# from Sentinel-2 band 4(red) and band 8(NIR)
-#---------------------------------
-folder <- 'data/Sentinel_2/'
 aoi <- readOGR(dsn = "data", layer = "study_area")
 
-# load Sentinel-2 images (retrieved from EO browser)
-b04_stack <- stack(paste0(folder, list.files(folder, 'L2A_B04')))
-b08_stack <- stack(paste0(folder, list.files(folder, 'L2A_B08')))
-classified_stack <- stack(paste0(folder, list.files(folder, 'classification')), bands = 1)
+out <- raster('output/raster_template.grd')
 
-# check equal nlayers()
-nlayers(b04_stack) == nlayers(b08_stack) & nlayers(b04_stack) == nlayers(classified_stack)
 
-ndvi_stack <- stack()
-ndvi_names <- NULL
-for (i in 1:length(names(b04_stack))) {
-  date_b04 <- str_sub(names(b04_stack[[i]]), start = 2, end = 11)
-  date_b08 <- str_sub(names(b08_stack[[i]]), start = 2, end = 11)
-  if (date_b04 == date_b08) {
-    print(paste0(i, ' out of ', length(names(b04_stack))))
-    ndvi_names <- c(ndvi_names, date_b04)
-    new_ndvi <- (b08_stack[[i]] - b04_stack[[i]])/(b08_stack[[i]] + b04_stack[[i]])
-    
-    # using sentinel classification to replace cloud pixels with NA value for NDVI
-    # value 65535 = cloud high probability
-    # value 49345 = cloud medium probability
-    cl <- classified_stack[[i]]
-    cl[cl == 65535] <- NA
-    cl[cl == 49345] <- NA
-    new_ndvi <- mask(new_ndvi, cl)
-    
-    ndvi_stack <- addLayer(ndvi_stack, new_ndvi)
+#------------------------------------------------------------
+# create indices from Sentinel-2 imagery (from EO browser)
+#------------------------------------------------------------
+folder <- 'data/Sentinel_2/'
+
+# function to retrieve Sentinel-2 images and create an index (e.g. NDVI)
+sentinel2_index <- function(name1, name2, sent2_path, cloudmask = TRUE){
+  # IMPORTANT: index is executed: (name1 - name2) / (name1 + name2)
+  
+  # load Sentinel-2 images (retrieved from EO browser)
+  stack1 <- stack(paste0(folder, list.files(folder, name1)))
+  stack2 <- stack(paste0(folder, list.files(folder, name2)))
+  
+  # check equal nlayers()
+  if (nlayers(stack1) != nlayers(stack2)){
+    warning('Sentinel-2 images are missing, check the designated folder.')
   }
+  
+  if (cloudmask){
+    classified_stack <- stack(paste0(folder, list.files(folder, 'classification')), bands = 1)
+    if (nlayers(stack1) != nlayers(classified_stack)){
+      warning('Sentinel-2 scene classification images are missing, check the designated folder.')
+    }
+  }
+  
+  index_stack <- stack()
+  date_names <- NULL
+  for (i in 1:length(names(stack1))) {
+    date1 <- str_sub(names(stack1[[i]]), start = 2, end = 11)
+    date2 <- str_sub(names(stack2[[i]]), start = 2, end = 11)
+    if (date1 == date2) {
+      print(paste0(i, ' out of ', length(names(stack1))))
+      date_names <- c(date_names, date1)
+      layer <- (stack1[[i]] - stack2[[i]])/(stack1[[i]] + stack2[[i]])
+      
+      if (cloudmask){
+        # using sentinel classification to replace cloud pixels with NA value for NDVI
+        # value 65535 = cloud high probability
+        # value 49345 = cloud medium probability
+        cl <- classified_stack[[i]]
+        cl[cl == 65535] <- NA
+        cl[cl == 49345] <- NA
+        layer <- mask(layer, cl)
+      }
+      index_stack <- addLayer(index_stack, layer)
+    }
+  }
+  names(index_stack) <- date_names
+  return(index_stack)
 }
-names(ndvi_stack) <- ndvi_names
 
+
+# vegetation index (NDVI)
+ndvi_stack <- sentinel2_index('L2A_B08', 'L2A_B04', sent2_path = folder)
 plot(ndvi_stack[[1]])
-
-# remove large objects
-remove(b04_stack, b08_stack, classified_stack)
 
 
 # reproject to res/crs of output raster
 ndvi_stack <- projectRaster(ndvi_stack, to = out, method = 'bilinear')
-plot(ndvi_stack[[1]])
 
 
-#---------------------------------
-# extract NDVI time series at incident locations
-#---------------------------------
+#------------------------------------------------------------
+# extract a time series of each index at incident locations
+#------------------------------------------------------------
+
+# NDVI
 
 ndvi_vals <- raster::extract(ndvi_stack,  df$cell_id)
-View(ndvi_vals)
+# View(ndvi_vals)
 
-# plot an NDVI time series for a single location
+# plot an ndvi time series for a single location
 dates <- as.Date(gsub('X', '', colnames(ndvi_vals)), '%Y.%m.%d')
-
 plot(dates, ndvi_vals[1,], type = 'l')
 points(dates, ndvi_vals[1,])
 
-
 # get ndvi max and mean
 ndvi_m <- rowMeans(ndvi_vals, na.rm = TRUE)
-ndvi_mx <- apply(ndvi_vals, 1, max)
+ndvi_mx <- rowMaxs(ndvi_vals, na.rm = TRUE) # max because clouds give low NDVI
+
 
 features <- cbind(df, ndvi_mean = ndvi_m) %>% 
   cbind(ndvi_max = ndvi_mx)
 summary(features)
+
 
 
 # using savitzky-golay filter (concerning cloud cover outliers, however only works if first value is not affected by clouds)
@@ -118,11 +135,9 @@ write.csv(features, 'output/location_features.csv', row.names = FALSE)
 
 
 
-
-
-#---------------------------------
+#------------------------------------------------------------
 # when using copernicus hub jp2 files
-#---------------------------------
+#------------------------------------------------------------
 # more complicated file structure and have to convert .jp2 format to .tif
 
 aoi <- readOGR(dsn = "data", layer = "study_area") %>% 
