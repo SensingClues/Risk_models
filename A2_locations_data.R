@@ -1,4 +1,4 @@
-# Retrieve incident locations from the Focus API (Sening Clues).
+# Retrieve incident locations from the Focus API (Sensing Clues).
 # Create pseudo-absence locations sampled from the area of interest.
 # Save all locations (identified by raster cell number) in a DataFrame with labels:
 # incident, pseudo-absent, other
@@ -61,7 +61,7 @@ dt.range <- '{"to":"2020-07-31T22:00:00.000Z","from":"2010-01-04T23:00:00.000Z"}
 get_Focus_data <- function(incident.type, map.bounds, date.time.range){
   q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', map.bounds, ',"drawings":[]},
               "concepts":', incident.type,',"dataSources":[],"dateTimeRange":', date.time.range,'},
-              "options":{"start":0,"pageLength":20},"start":1,"pageLength":500}')
+              "options":{"start":0,"pageLength":20},"start":1,"pageLength":1000}')
   url.collect <- paste0(URL, 'api/map/all/default/0/features')
   incidentDATA.L <- POST(url.collect, body=q, encode="raw", content_type_json())
   incidentDATA <- content(incidentDATA.L)
@@ -196,7 +196,7 @@ if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
         TRACK <- TRACK[Include,]
         
         # remove unuseful columns
-        TRACK <- dplyr::select(TRACK, c('ID', 'long', 'lat', 'Time'))
+        TRACK <- dplyr::select(TRACK, c('ID', 'long', 'lat', 'Time', 'Year'))
         
         TRACKS <- rbind(TRACKS,TRACK)
       }
@@ -232,17 +232,23 @@ if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
   }
 }
 
+
+min(TRACKS$Time)
+max(TRACKS$Time)
+
+
 # convert tracks to spatial object
 if(!is.null(TRACKS)) {
-  coordinates(TRACKS) <- ~lon+lat
+  coordinates(TRACKS) <- ~long+lat
   crs(TRACKS) <- crs('+proj=longlat +ellps=WGS84 +no_defs')  
   TRACKS.T <- spTransform(TRACKS, crs("+proj=utm +zone=37 +south +datum=WGS84 +units=m +no_defs"))
 } else {
   print("all tracks skipped, no valid tracks loaded")
 }
 
-min(TRACKS$Time)
-max(TRACKS$Time)
+# Note: cannot remove points outside of aoi like in line 99-101 
+# because TRACKS is spatialpointsdataframe instead of spatialpoints
+# line 307 accounts for this problem when sampling pseudo-absence points
 
 # check tracks data
 TRACKS_subset <- TRACKS.T[sample(1:nrow(TRACKS.T),5000),]
@@ -289,12 +295,14 @@ get_pseudo_absence_locations <- function(area_sp, area_grid, presence_data_sp, n
       patrol_sp <- spTransform(patrol_sp, crs(area_grid))
     }
     
-    cell_pat <- as.data.frame(cellFromXY(area_grid, patrol_sp))
+    cell_pat <- as.data.frame(cellFromXY(area_grid, patrol_sp)) # points outside of area_grid get NA value
     names(cell_pat) <- 'cell_id'
     cell_pat <- cell_pat %>% 
       group_by(cell_id) %>% 
       summarise(count = n()) %>% 
-      filter(count > min_revisit)
+      filter(count > min_revisit) %>% 
+      filter(cell_id %in% cell_aoi) # remove cell_ids outside of AOI
+    cell_pat <- cell_pat$cell_id
     
     cell_opt <- setdiff(cell_pat, cell_pr)
   }
@@ -312,12 +320,12 @@ get_pseudo_absence_locations <- function(area_sp, area_grid, presence_data_sp, n
 
 
 # assign each location in aoi to absent/present/other for both training and testing
-tr_cell_list <- get_pseudo_absence_locations(aoi, out, train.T)
+tr_cell_list <- get_pseudo_absence_locations(aoi, out, train.T, patrol_sp = TRACKS.T)
 tr_cell_ab <- tr_cell_list[[1]]
 tr_cell_pr <- tr_cell_list[[2]]
 tr_cell_aoi <- tr_cell_list[[3]]
 
-ts_cell_list <- get_pseudo_absence_locations(aoi, out, test.T, seed = 500)
+ts_cell_list <- get_pseudo_absence_locations(aoi, out, test.T, seed = 500, patrol_sp = TRACKS.T)
 ts_cell_ab <- ts_cell_list[[1]]
 ts_cell_pr <- ts_cell_list[[2]]
 ts_cell_aoi <- ts_cell_list[[3]]
