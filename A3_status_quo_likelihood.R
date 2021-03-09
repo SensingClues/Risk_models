@@ -45,12 +45,13 @@ rl <- POST(url.login,
 i.type <- '["https://sensingclues.poolparty.biz/SCCSSOntology/97"]'
 bounds <- '{"south":-5.104080690471747,"west":37.03937894518083,
             "north":-2.56592681976295,"east":40.349053193120966}'
-dt.range <- '{"to":"2021-01-31T22:00:00.000Z","from":"2020-08-01T23:00:00.000Z"}'
+date_range <- c('2020-02-01', '2020-09-01') # (from, to)
 
-get_Focus_data <- function(incident.type, map.bounds, date.time.range){
+get_Focus_data <- function(incident.type, map.bounds, date.range){
   q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', map.bounds, ',"drawings":[]},
-              "concepts":', incident.type,',"dataSources":[],"dateTimeRange":', date.time.range,'},
-              "options":{"start":0,"pageLength":20},"start":1,"pageLength":500}')
+              "concepts":', incident.type,',"dataSources":[],
+              "dateTimeRange":{"to":"',date.range[2],'T22:00:00.000Z","from":"',date.range[1],'T23:00:00.000Z"}},
+              "options":{"start":0,"pageLength":20},"start":1,"pageLength":1000}')
   url.collect <- paste0(URL, 'api/map/all/default/0/features')
   incidentDATA.L <- POST(url.collect, body=q, encode="raw", content_type_json())
   incidentDATA <- content(incidentDATA.L)
@@ -78,7 +79,7 @@ get_Focus_data <- function(incident.type, map.bounds, date.time.range){
 }
 
 
-DATA <- get_Focus_data(i.type, bounds, dt.range)
+DATA <- get_Focus_data(i.type, bounds, date_range)
 
 map <- leaflet() %>% 
   addTiles() %>% 
@@ -90,107 +91,24 @@ map
 # tracks data collection
 #------------------------------------------------------------
 
-TRACKS <- NULL
-
 # tracks before 2020 are stored locally, tracks from 2020 onwards are in Focus
-if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
+if (as.Date(date_range[1]) < as.Date("2020-01-01")){
   print('Retrieving tracks from locally stored files.')
   
-  # for each file in each folder:
-  FOLDERS <- list.dirs()
-  FOLDERS <- FOLDERS[grepl('tracks/ST', FOLDERS, fixed = TRUE)]
-  for (j in 1:length(FOLDERS)) {
-    print(paste0('folder ', j, ' out of ', length(FOLDERS)))
-    files <- list.files(FOLDERS[j])[-1]
-    files <- substr(files,1,nchar(files)-4)
-    for (i in 1:length(files)) {
-      FILENAME <- paste(FOLDERS[j],"/",files[i],".LOG",sep="")
-      track <- read.table(FILENAME,skip=1)
-      track <- as.character(track[substring(track$V1,1,6)=="$GPGGA",])
-      TRACK <- NULL
-      for(a in 1:length(track)) {
-        TRACK <- rbind(TRACK,strsplit(track[a],",")[[1]])
-      }
-      TRACK <- as.data.frame(TRACK)
-      # only use tracks with more than 5 recordings
-      if (dim(TRACK)[1] >= 5){
-        names(TRACK) <- c("SentenceID","Time","Latitude","N_or_S","Longitude","E_or_W","FixQuality",
-                          "NofSatellites","HDOP","Altitude","Altitude_unit","HeightAbvWGS84","unit","DGPSref","Checksum")
-        TRACK$Time <- as.numeric(as.character(TRACK$Time))
-        TRACK$Latitude <- as.numeric(as.character(TRACK$Latitude))
-        TRACK$Longitude <- as.numeric(as.character(TRACK$Longitude))
-        TRACK$Altitude <- as.numeric(as.character(TRACK$Altitude))
-        
-        TRACK$ID <- FILENAME
-        TRACK$Year <- as.numeric(paste("20",substr(files[i],2,3),sep=""))
-        TRACK$Month <- as.numeric(substr(files[i],4,5))
-        TRACK$Day <- as.numeric(substr(files[i],6,7))
-        TRACK$Hour <- TRACK$Time %/% 10000
-        TRACK$Minute <- TRACK$Time %% 10000
-        TRACK$Second <- TRACK$Minute %% 100
-        TRACK$Minute <- TRACK$Minute %/% 100
-        TRACK$Time <- as.POSIXct(paste0(TRACK$Year,"-",TRACK$Month,"-",TRACK$Day," ",
-                                        TRACK$Hour,":",TRACK$Minute,":",TRACK$Second),tz="UTC")
-        # ----------------
-        # # Fix date when time passes midnight
-        # TRACK$dTIME <- NA
-        # TRACK$dTIME[2:nrow(TRACK)] <- TRACK$Time[2:nrow(TRACK)]-TRACK$Time[2:nrow(TRACK)-1]
-        # newID <- c(TRUE,!TRACK$ID[2:nrow(TRACK)] == TRACK$ID[2:nrow(TRACK)-1])
-        # DateChange <- TRACK$dTIME < 0 & !is.na(TRACK$dTIME)&!newID
-        # i <- 1
-        # while(!i > nrow(TRACK)) {
-        #   if (newID[i]) {
-        #     check <- FALSE
-        #   }
-        #   if (DateChange[i]) {
-        #     check <- TRUE
-        #     print(TRACK$Time[i])
-        #   }
-        #   if (check) {DateChange[i] <- TRUE}
-        #   
-        #   i <- i + 1
-        #   #print(i)
-        # }
-        # TRACK$Time[DateChange] <- TRACK$Time[DateChange] + 60*60*24
-        # TRACK$dTIME[2:nrow(TRACK)] <- TRACK$Time[2:nrow(TRACK)]-TRACK$Time[2:nrow(TRACK)-1]
-        # TRACK$dTIME[newID] <- NA
-        # ---------------
-        
-        # get longitude and latitude in WGS84 format
-        testLat <- TRACK$Latitude%/%100+TRACK$Latitude%%100/60
-        testLong <- TRACK$Longitude%/%100+TRACK$Longitude%%100/60
-        testLat[TRACK$N_or_S=="S"] <- -testLat[TRACK$N_or_S=="S"]
-        
-        TRACK$long <- testLong
-        TRACK$lat <- testLat
-        testLong[TRACK$E_or_W=="W"] <- -testLong[TRACK$E_or_W=="W"]
-        
-        # downsample track records to once every 10 min
-        TRACK$dMINUTE <- NA
-        TRACK$dMINUTE[2:nrow(TRACK)] <- TRACK$Minute[2:nrow(TRACK)]-TRACK$Minute[2:nrow(TRACK)-1]
-        # keep every 10th minute of the hour, remove double recordings per minute
-        Include <- TRACK$Minute %% 10 == 0 & (TRACK$dMINUTE != 0 | is.na(TRACK$dMINUTE))
-        TRACK <- TRACK[Include,]
-        
-        # remove unuseful columns
-        TRACK <- dplyr::select(TRACK, c('ID', 'long', 'lat', 'Time'))
-        
-        TRACKS <- rbind(TRACKS,TRACK)
-      }
-      
-    }
-    
-  }
+  TRACKS <- read.csv('data/processed/tracks_2015_to_2019.csv')
   
 } else { # if From Date >= 2020-01-01
   print('Retrieving tracks from Focus.')
   
   url.tracks <- paste0(URL,"api/map/all/track/0/features")
   q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', bounds, '"drawings":[]},
-  "dateTimeRange":', dt.range,'}}')
+              "dateTimeRange":{"to":"',date_range[2],'T22:00:00.000Z","from":"',date_range[1],'T23:00:00.000Z"}}
+              ,"options":{"start":0,"pageLength":20},"start":1,"pageLength":1000}')
   trackDATA.L <- POST(url.tracks, body=q, encode="raw", content_type_json())
   trackDATA <- content(trackDATA.L)
   Ntracks <- length(trackDATA$features)
+  
+  TRACKS <- NULL
   
   if(Ntracks!=0) {
     print("Unpacking tracks (this may take a while...)")
@@ -199,11 +117,26 @@ if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
       coords <- as.numeric(unlist(trackDATA$features[[i]]$geometry)[-1])
       coords <- t(matrix(unlist(coords),nrow=2,ncol=length(coords)))
       coords <- data.frame(coords)
-      names(coords) <- c("lon","lat")
+      names(coords) <- c("long","lat")
+      
+      coords$Timestamp <- strsplit(trackDATA$features[[i]]$properties$DateTimes, ",")[[1]]
+      coords$Minute <- as.numeric(substr(coords$Timestamp, 15, 16))
+      # coords$Timestamp <- as.POSIXct(coords$Timestamp, "%Y-%m-%dT%H:%M:%S")
+      
+      # downsample track records to once every 10 min
+      coords$dMINUTE <- NA
+      coords$dMINUTE[2:nrow(coords)] <- coords$Minute[2:nrow(coords)]-coords$Minute[2:nrow(coords)-1]
+      # keep every 10th minute of the hour, remove double recordings per minute
+      Include <- coords$Minute %% 10 == 0 & (coords$dMINUTE != 0 | is.na(coords$dMINUTE))
+      coords <- coords[Include,]
+      
+      # remove unuseful columns
+      coords <- dplyr::select(coords, c('long', 'lat', 'Timestamp'))
+      
       TRACKS <- rbind(TRACKS,coords)
     }
     print("Successfully loaded the tracks")
-
+    
   } else {
     print("no tracks found")
   }
@@ -260,6 +193,10 @@ if(!is.null(DATA)) {
     Hotspots <- IncDensity.raster
     print("Hotspots are not corrected for areas visited")
   }
+  par(mfrow = c(1,3))
+  plot(IncDensity.raster, main = "incident")
+  plot(PatDensity.raster, main = 'patrolling')
+  plot(Hotspots, main = 'hotspots')
   
   # create a leaflet map
   map <- leaflet() %>% 
