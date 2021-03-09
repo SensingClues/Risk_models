@@ -20,8 +20,17 @@ library(leaflet)
 # (could get an old version)
 
 
-# # set a name for the output
-# name_out <- 'tr_Jan10-Jul20_ts_Aug20-Dec20'
+#------------------------------------------------------------
+# setup
+#------------------------------------------------------------
+
+# set date range of training set
+date_range <- c('2020-02-01', '2020-09-01') # (from, to)
+date_range_test <- c('2020-09-01', '2021-03-11')
+
+# choose a scenario name
+sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+
 # set coordinate reference system
 crs_kenya <- crs("+proj=utm +zone=37 +south +datum=WGS84 +units=m +no_defs")
 
@@ -57,11 +66,11 @@ rl <- POST(url.login,
 i.type <- '["https://sensingclues.poolparty.biz/SCCSSOntology/97"]'
 bounds <- '{"south":-5.104080690471747,"west":37.03937894518083,
             "north":-2.56592681976295,"east":40.349053193120966}'
-dt.range <- '{"to":"2020-07-31T22:00:00.000Z","from":"2010-01-04T23:00:00.000Z"}'
 
-get_Focus_data <- function(incident.type, map.bounds, date.time.range){
+get_Focus_data <- function(incident.type, map.bounds, date.range){
   q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', map.bounds, ',"drawings":[]},
-              "concepts":', incident.type,',"dataSources":[],"dateTimeRange":', date.time.range,'},
+              "concepts":', incident.type,',"dataSources":[],
+              "dateTimeRange":{"to":"', date.range[2],'T22:00:00.000Z","from":"',date.range[1],'T23:00:00.000Z"}},
               "options":{"start":0,"pageLength":20},"start":1,"pageLength":1000}')
   url.collect <- paste0(URL, 'api/map/all/default/0/features')
   incidentDATA.L <- POST(url.collect, body=q, encode="raw", content_type_json())
@@ -90,8 +99,8 @@ get_Focus_data <- function(incident.type, map.bounds, date.time.range){
 }
 
 
-train <- get_Focus_data(i.type, bounds, dt.range)
-test <- get_Focus_data(i.type, bounds, date.time.range = '{"to":"2021-01-31T22:00:00.000Z","from":"2020-08-01T23:00:00.000Z"}')
+train <- get_Focus_data(i.type, bounds, date_range)
+test <- get_Focus_data(i.type, bounds, date.range = date_range_test)
 
 # transform to projected coordinate system (in meters)
 train.T <- spTransform(train, crs_kenya)
@@ -115,7 +124,7 @@ map
 #------------------------------------------------------------
 
 # tracks before 2020 are stored locally, tracks from 2020 onwards are in Focus
-if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
+if (as.Date(date_range[1]) < as.Date("2020-01-01")){
   print('Retrieving tracks from locally stored files.')
   
   TRACKS <- read.csv('data/processed/tracks_2015_to_2019.csv')
@@ -125,7 +134,8 @@ if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
   
   url.tracks <- paste0(URL,"api/map/all/track/0/features")
   q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', bounds, '"drawings":[]},
-  "dateTimeRange":', dt.range,'},"options":{"start":0,"pageLength":20},"start":1,"pageLength":1000}')
+              "dateTimeRange":{"to":"',date_range[2],'T22:00:00.000Z","from":"',date_range[1],'T23:00:00.000Z"}}
+              ,"options":{"start":0,"pageLength":20},"start":1,"pageLength":1000}')
   trackDATA.L <- POST(url.tracks, body=q, encode="raw", content_type_json())
   trackDATA <- content(trackDATA.L)
   Ntracks <- length(trackDATA$features)
@@ -168,7 +178,6 @@ if (as.Date(substr(dt.range, start = 42, stop = 51)) < as.Date("2020-01-01")){
 min(TRACKS$Timestamp)
 max(TRACKS$Timestamp)
 
-
 # convert tracks to spatial object
 if(!is.null(TRACKS)) {
   coordinates(TRACKS) <- ~long+lat
@@ -193,7 +202,7 @@ plot(aoi, add = TRUE)
 #------------------------------------------------------------
 
 # create the desired output raster from the aoi Polygon object
-out <- raster(aoi, resolution = 1000) # 1 x 1 km spatial resolution
+out <- raster(aoi, resolution = 1400) # 1.4 x 1.4 km spatial resolution (from Ea)
 
 # there are duplicates in the incident data:
 length(train.T)
@@ -252,12 +261,14 @@ get_pseudo_absence_locations <- function(area_sp, area_grid, presence_data_sp, n
 
 
 # assign each location in aoi to absent/present/other for both training and testing
-tr_cell_list <- get_pseudo_absence_locations(aoi, out, train.T, patrol_sp = TRACKS.T)
+tr_cell_list <- get_pseudo_absence_locations(aoi, out, train.T, patrol_sp = TRACKS.T, 
+                                             min_revisit = 5)
 tr_cell_ab <- tr_cell_list[[1]]
 tr_cell_pr <- tr_cell_list[[2]]
 tr_cell_aoi <- tr_cell_list[[3]]
 
-ts_cell_list <- get_pseudo_absence_locations(aoi, out, test.T, seed = 500, patrol_sp = TRACKS.T)
+ts_cell_list <- get_pseudo_absence_locations(aoi, out, test.T, seed = 500, patrol_sp = TRACKS.T,
+                                             min_revisit = 5)
 ts_cell_ab <- ts_cell_list[[1]]
 ts_cell_pr <- ts_cell_list[[2]]
 ts_cell_aoi <- ts_cell_list[[3]]
@@ -284,7 +295,7 @@ out$test[ts_cell_ab] <- rep(0, length(ts_cell_ab))
 
 
 # save the output raster
-writeRaster(out, 'output/raster_template', overwrite = TRUE)
+writeRaster(out, paste0('output/rasters_', sc_name, '.tif'), overwrite = TRUE)
 
 
 # visualize training incident and pseudo data on map
@@ -317,8 +328,7 @@ head(df %>% filter(train == 1), 10)$cell_id == sort(tr_cell_pr)[1:10]
 
 
 # store DataFrame as csv
-write.csv(x = df, file = 'output/location_features.csv', row.names = FALSE)
-# write.csv(x = df, file = paste0('output/location_features_', name_out, '.csv'), row.names = FALSE)
+write.csv(x = df, file = paste0('output/location_features_', sc_name, '.csv'), row.names = FALSE)
 
 
 

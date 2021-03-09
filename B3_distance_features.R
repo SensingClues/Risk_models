@@ -7,10 +7,17 @@
 library(raster)
 
 
-df <- read.csv('output/location_features.csv')
+#------------------------------------------------------------
+# setup
+#------------------------------------------------------------
 
-out <- raster('output/raster_template.grd')
-plot(out)
+# choose a scenario name
+sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+
+df <- read.csv(paste0('output/location_features_', sc_name, '.csv'))
+
+out <- raster(paste0('output/rasters_', sc_name, '.tif'))
+
 
 #------------------------------------------------------------
 # extract nearest distance at locations from distance rasters
@@ -47,7 +54,7 @@ summary(features)
 
 
 # store the new features with the existing location_features file
-write.csv(features, 'output/location_features.csv', row.names = FALSE)
+write.csv(features, paste0('output/location_features_', sc_name, '.csv'), row.names = FALSE)
 
 
 

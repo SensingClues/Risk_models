@@ -19,9 +19,21 @@ library(plotROC)
 
 
 #------------------------------------------------------------
-# retrieve input locations and corresponding features
+# setup
 #------------------------------------------------------------
-inputs <- read.csv('output/location_features.csv')
+
+# choose a scenario name
+sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+
+inputs <- read.csv(paste0('output/location_features_', sc_name, '.csv'))
+
+out <- stack(paste0('output/rasters_', sc_name, '.tif'))
+
+
+#------------------------------------------------------------
+# look into input locations and their corresponding features
+#------------------------------------------------------------
+
 summary(inputs)
 str(inputs)
 table(inputs$train)
@@ -100,58 +112,58 @@ stats::step(mod_basic2) # backwards feature selection
 # summary(mod_final)
 mod_final <- logistic_reg(mode = "classification") %>%
   set_engine("glm") %>%
-  fit(train ~ ndvi_max + dwater + droad, data = baked_train)
+  fit(train ~ dwater + droad, data = baked_train)
 tidy(mod_final)
+mod_final
 
-# cross-validation
-# ----------
-set.seed(555)
-l_cv <- vfold_cv(baked_train, v = 10, strata = "train")
-
-mod_glm <-map2_df(.x = l_cv$splits,
-                  .y = l_cv$id,
-                  function (split = .x, fold = .y) 
-                  {
-                    # Split the data into analysis and assessment tables
-                    df_analysis <- analysis(split)
-                    df_assessment <- assessment(split)
-                      
-                    # Build the model
-                    mod <-
-                      logistic_reg(mode = "classification") %>%
-                      set_engine("glm") %>%
-                      fit(train ~ ., data = df_analysis)
-                      
-                    # Summarise Predictions
-                    table <- 
-                      tibble(fold = fold,
-                              truth = df_assessment$train,
-                              .pred_Incident = 
-                                predict(mod, 
-                                        new_data = df_assessment, 
-                                        type = "prob")[[".pred_Incident"]],
-                              .pred_Unharmed = 
-                                predict(mod, 
-                                        new_data = df_assessment, 
-                                        type = "prob")[[".pred_Unharmed"]],
-                              .pred_Class = 
-                                predict(mod, 
-                                        new_data = df_assessment) %>% 
-                                unlist() %>% 
-                                as.character()
-                      ) %>%
-                      mutate(.pred_Class = factor(.pred_Class))
-                  })
-
-mod_glm %>% group_by(fold) %>%
-  metrics(truth, .pred_Class)
-# ------------
+# # cross-validation
+# # ----------
+# set.seed(555)
+# l_cv <- vfold_cv(baked_train, v = 10, strata = "train")
+# 
+# mod_glm <-map2_df(.x = l_cv$splits,
+#                   .y = l_cv$id,
+#                   function (split = .x, fold = .y) 
+#                   {
+#                     # Split the data into analysis and assessment tables
+#                     df_analysis <- analysis(split)
+#                     df_assessment <- assessment(split)
+#                       
+#                     # Build the model
+#                     mod <-
+#                       logistic_reg(mode = "classification") %>%
+#                       set_engine("glm") %>%
+#                       fit(train ~ ., data = df_analysis)
+#                       
+#                     # Summarise Predictions
+#                     table <- 
+#                       tibble(fold = fold,
+#                               truth = df_assessment$train,
+#                               .pred_Incident = 
+#                                 predict(mod, 
+#                                         new_data = df_assessment, 
+#                                         type = "prob")[[".pred_Incident"]],
+#                               .pred_Unharmed = 
+#                                 predict(mod, 
+#                                         new_data = df_assessment, 
+#                                         type = "prob")[[".pred_Unharmed"]],
+#                               .pred_Class = 
+#                                 predict(mod, 
+#                                         new_data = df_assessment) %>% 
+#                                 unlist() %>% 
+#                                 as.character()
+#                       ) %>%
+#                       mutate(.pred_Class = factor(.pred_Class))
+#                   })
+# 
+# mod_glm %>% group_by(fold) %>%
+#   metrics(truth, .pred_Class)
+# # ------------
 
 
 #------------------------------------------------------------
 # create incident likelihood map
 #------------------------------------------------------------
-out <- stack('output/raster_template.grd')
 
 # preprocess all input locations
 dim(inputs)
@@ -181,7 +193,7 @@ plot(out$prediction, legend = FALSE, col = c('lightblue', 'darkblue'),
 legend("bottomleft", legend = c("not_likely", "likely"),
        title = 'Charcoaling incident', fill = c('lightblue', 'darkblue'))
 
-writeRaster(out, 'output/model_likelihood.tif', format="GTiff", overwrite = TRUE)
+writeRaster(out, paste0('output/model_likelihood_', sc_name, '.tif'), format="GTiff", overwrite = TRUE)
 
 
 #------------------------------------------------------------
@@ -215,7 +227,7 @@ g <- ggplot(roc_df, aes(m=prob_Incident, d=truth)) +
   style_roc() +
   geom_abline(intercept = 0, slope = 1, color = 'grey')
 g + annotate("text", x=0.75, y=0.25, label=paste("AUC =", round((calc_auc(g))$AUC, 4)))
-ggsave('output/ROC_curve.jpg')
+ggsave(paste0('output/ROC_curve_', sc_name, '.jpg'))
 
 # alternative: (retrieve tpr and fpr)
 # library(pROC)

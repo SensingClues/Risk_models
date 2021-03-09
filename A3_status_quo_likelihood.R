@@ -15,6 +15,16 @@ library("KernSmooth")
 library(leaflet)
 
 
+#------------------------------------------------------------
+# setup
+#------------------------------------------------------------
+
+# set date range of training set
+date_range <- c('2020-02-01', '2020-09-01') # (from, to)
+
+# choose a scenario name
+sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+
 # mapping parameters:
 HotspotColor = c("#040404B3","#080918B3","#0E0D24B3","#150F2EB3","#1D1135B3","#24123CB3","#2C1242B3","#341348B3","#3C134EB3","#451353B3","#4D1259B3",
                  "#56125DB3","#5F1162B3","#681066B3","#701069B3","#79106DB3","#82106FB3","#8A1172B3","#931373B3","#9B1674B3","#A31A75B3","#AB1E75B3",
@@ -45,7 +55,6 @@ rl <- POST(url.login,
 i.type <- '["https://sensingclues.poolparty.biz/SCCSSOntology/97"]'
 bounds <- '{"south":-5.104080690471747,"west":37.03937894518083,
             "north":-2.56592681976295,"east":40.349053193120966}'
-date_range <- c('2020-02-01', '2020-09-01') # (from, to)
 
 get_Focus_data <- function(incident.type, map.bounds, date.range){
   q <- paste0('{"filters":{"geoQuery":{"operator":"intersects","mapBounds":', map.bounds, ',"drawings":[]},
@@ -208,4 +217,5 @@ if(!is.null(DATA)) {
 
 
 # save status quo likelihood raster for predictive performance measurements in script C1
-writeRaster(Hotspots, filename = 'output/status_quo_likelihood.tif', format="GTiff", overwrite = TRUE)
+writeRaster(Hotspots, filename = paste0('output/status_quo_likelihood_', sc_name,'.tif'), 
+            format="GTiff", overwrite = TRUE)

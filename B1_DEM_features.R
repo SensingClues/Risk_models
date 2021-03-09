@@ -13,17 +13,25 @@ library(tidyverse)
 library(ggplot2)
 
 
+#------------------------------------------------------------
+# setup
+#------------------------------------------------------------
+
+# choose a scenario name
+sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+
 # retrieve locations in area of interest (AOI)
-df <- read.csv('output/location_features.csv')
+df <- read.csv(paste0('output/location_features_', sc_name, '.csv'))
+
+# area of interest
+aoi <- readOGR(dsn = "data", layer = "study_area")
+
+out <- raster(paste0('output/rasters_', sc_name, '.tif'))
 
 
 #------------------------------------------------------------
 # load, reproject and mask DEM
 #------------------------------------------------------------
-# area of interest
-aoi <- readOGR(dsn = "data", layer = "study_area")
-
-out <- raster('output/raster_template.grd')
 
 # merge DEM tiles, mask them for the aoi and reproject them to desired resolution/crs (out)
 dem_aoi <- raster('data/dem_s04_e038_1arc_v3.tif') %>% 
@@ -124,4 +132,4 @@ map
 
 
 # store the new features with the existing location_features file
-write.csv(features, 'output/location_features.csv', row.names = FALSE)
+write.csv(features, paste0('output/location_features_', sc_name, '.csv'), row.names = FALSE)

@@ -17,11 +17,18 @@ library(Rfast)
 library(matrixStats)
 
 
-df <- read.csv('output/location_features.csv')
+#------------------------------------------------------------
+# setup
+#------------------------------------------------------------
+
+# choose a scenario name
+sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+
+df <- read.csv(paste0('output/location_features_', sc_name, '.csv'))
 
 aoi <- readOGR(dsn = "data", layer = "study_area")
 
-out <- raster('output/raster_template.grd')
+out <- raster(paste0('output/rasters_', sc_name, '.tif'))
 
 
 #------------------------------------------------------------
@@ -146,7 +153,7 @@ map
 
 
 # store the new features with the existing location_features file
-write.csv(features, 'output/location_features.csv', row.names = FALSE)
+write.csv(features, paste0('output/location_features_', sc_name, '.csv'), row.names = FALSE)
 
 
 
