@@ -1,6 +1,6 @@
 # Get data splits (train and test set) for the location grid cells.
 # Preprocess the data (removing NAs etc.).
-# Train the model, also performing cross-validation.
+# Train the model, choosing from logistic regression, random forest and support vector machine.
 # Use the final model to create an incident likelihood map.
 # Measure model performance on the test set.
 # Explore the relationship of the features with the dependent variable (incident yes/no).
@@ -23,7 +23,9 @@ library(plotROC)
 #------------------------------------------------------------
 
 # choose a scenario name
-sc_name <- 'SC_6month' # other scenarios: 'SC_3month', 'SC_1month', 'SC_alldata'
+sc_name <- 'SC_1month' # other scenarios: 'SC_6month', 'SC_3month', 'SC_alldata'
+
+model_type <- 'rf' # other model types: 'log', 'svm'
 
 inputs <- read.csv(paste0('output/location_features_', sc_name, '.csv'))
 
@@ -40,7 +42,7 @@ table(inputs$train)
 
 # correlation check for predictors
 corrplot(cor(inputs %>% 
-               select(- c(train, test, cell_id, train_label, test_label)) %>% 
+               dplyr::select(- c(train, test, cell_id, train_label, test_label)) %>% 
                filter(! is.na(elevation_m) & ! is.na(slope_deg) & ! is.na(ndvi_mean)))) 
 
 
@@ -93,28 +95,64 @@ table(baked_train$train)
 # training the logistic regression model
 #------------------------------------------------------------
 
-mod_basic <- logistic_reg(mode = "classification") %>%
-  set_engine("glm") %>%
-  fit(train ~ . -cell_id , data = baked_train) # -dtown -dwater -droad
-tidy(mod_basic) 
+if (model_type == 'log'){
+  mod_basic <- logistic_reg(mode = "classification") %>%
+    set_engine("glm") %>%
+    fit(train ~ . -cell_id , data = baked_train) # -dtown -dwater -droad
+  tidy(mod_basic) 
+  
+  
+  # step() only accepts glm() model, it gives the same values as the tidymodels model
+  mod_basic2 <- glm(train ~ . -cell_id, data = baked_train, family = 'binomial')
+  summary(mod_basic2)
+  
+  # stepwise feature selection to determine best predictors
+  stats::step(mod_basic2) # backwards feature selection
+  
+  
+  # mod_final <- glm(formula = train ~ elevation_m + ndvi_mean + ndvi_max, 
+  #                  family = "binomial", data = baked_train)
+  # summary(mod_final)
+  mod_final <- logistic_reg(mode = "classification") %>%
+    set_engine("glm") %>%
+    fit(train ~ dwater + droad, data = baked_train)
+  tidy(mod_final)
+  mod_final
+}
 
+if (model_type == 'rf'){
+  mod_basic <- rand_forest(mode = "classification") %>%
+    set_engine("randomForest") %>%
+    fit(train ~ . -cell_id, data = baked_train)
+  mod_basic
+  
+  # step() only accepts glm() model
+  
+  mod_final <- rand_forest(mode = "classification", 
+                           mtry=5,
+                           trees=100,
+                           min_n=5) %>%
+    set_engine("randomForest") %>%
+    fit(train ~ . -cell_id, data = baked_train)
+  mod_final
+}
 
-# step() only accepts glm() model, it gives the same values as the tidymodels model
-mod_basic2 <- glm(train ~ . -cell_id, data = baked_train, family = 'binomial')
-summary(mod_basic2)
+if (model_type == 'svm'){
+  mod_basic <- svm_rbf(mode = "classification") %>%
+    set_engine("kernlab") %>%
+    fit(train ~ . -cell_id, data = baked_train)
+  mod_basic
+  
+  # step() only accepts glm() model
+  
+  mod_final <- svm_rbf(mode = "classification", 
+                       cost = 10, 
+                       rbf_sigma = 0.035) %>%
+    set_engine("kernlab") %>%
+    fit(train ~ . -cell_id, data = baked_train)
+  mod_final
+}
 
-# stepwise feature selection to determine best predictors
-stats::step(mod_basic2) # backwards feature selection
-
-
-# mod_final <- glm(formula = train ~ elevation_m + ndvi_mean + ndvi_max, 
-#                  family = "binomial", data = baked_train)
-# summary(mod_final)
-mod_final <- logistic_reg(mode = "classification") %>%
-  set_engine("glm") %>%
-  fit(train ~ dwater + droad, data = baked_train)
-tidy(mod_final)
-mod_final
 
 # # cross-validation
 # # ----------
@@ -167,7 +205,7 @@ mod_final
 
 # preprocess all input locations
 dim(inputs)
-baked_all <- bake(recipe, inputs %>% select(-train))
+baked_all <- bake(recipe, inputs %>% dplyr::select(-train))
 dim(baked_all)
 
 
@@ -184,14 +222,17 @@ plot(out$likelihood, main = 'Charcoaling likelihood')
 
 
 # incident classification map
-preds_aoi <- mutate(preds_aoi, class = ifelse(.pred_Incident > 0.5, 1, 0))
+preds_aoi <- mutate(preds_aoi, class = ifelse(.pred_Incident < 0.15, 1, 
+                                              ifelse(.pred_Incident < 0.5, 2, 
+                                                     ifelse(.pred_Incident < 0.85, 3, 4))))
+head(preds_aoi)
 
 out$prediction <- NA
 out$prediction[preds_aoi$cell_id] <- preds_aoi$class
-plot(out$prediction, legend = FALSE, col = c('lightblue', 'darkblue'), 
+plot(out$prediction, legend = FALSE, col = c('springgreen4', 'seagreen3', 'indianred1', 'red'), 
      main = 'Charcoaling classification')
-legend("bottomleft", legend = c("not_likely", "likely"),
-       title = 'Charcoaling incident', fill = c('lightblue', 'darkblue'))
+legend("bottomleft", legend = c("very unlikely", "unlikely", 'likely', 'very likely'),
+       title = 'Charcoaling incident', fill = c('springgreen4', 'seagreen3', 'indianred1', 'red'))
 
 writeRaster(out, paste0('output/model_likelihood_', sc_name, '.tif'), format="GTiff", overwrite = TRUE)
 
@@ -201,12 +242,12 @@ writeRaster(out, paste0('output/model_likelihood_', sc_name, '.tif'), format="GT
 #------------------------------------------------------------
 
 test_pred <- preds_aoi %>% filter(cell_id %in% test$cell_id)
-test_pred <- cbind(test, select(test_pred, -cell_id)) %>%
-  select(c(cell_id, test, .pred_Unharmed, .pred_Incident, class)) %>% 
+test_pred <- cbind(test, dplyr::select(test_pred, -cell_id)) %>%
+  dplyr::select(c(cell_id, test, .pred_Unharmed, .pred_Incident, class)) %>% 
   mutate(class = factor(class, levels = c(0,1), labels = c("Unharmed", "Incident")))
 head(test_pred)
 names(test_pred) <- c('cell_id', 'truth', 'prob_Unharmed', 'prob_Incident', 'prediction')
-table(test_pred %>% select(- c(cell_id, prob_Unharmed, prob_Incident)), useNA = 'ifany')
+table(test_pred %>% dplyr::select(- c(cell_id, prob_Unharmed, prob_Incident)), useNA = 'ifany')
 
 
 # accuracy
@@ -215,7 +256,7 @@ confusionMatrix(test_pred$prediction, reference = test_pred$truth, positive = 'I
 # manually save the information
 
 # ROC curve
-roc_df <- select(test_pred, c(truth, prob_Incident)) %>% 
+roc_df <- dplyr::select(test_pred, c(truth, prob_Incident)) %>% 
   arrange(prob_Incident) %>% 
   mutate(truth = ifelse(truth == 'Incident', 1, 0))
 head(roc_df)
@@ -234,34 +275,6 @@ ggsave(paste0('output/ROC_curve_', sc_name, '.jpg'))
 # ROC <- roc(response = roc_df$truth, predictor = roc_df$prob_Incident, 
 #              positive = 'Incident')
 # plot(ROC)
-
-
-#------------------------------------------------------------
-# compare to status quo map
-#------------------------------------------------------------
-
-prim <- raster('output/status_quo_likelihood.tif') %>% 
-  projectRaster(to = out, method = 'bilinear')
-plot(prim)
-
-prim_den <- raster::extract(prim, test$cell_id)
-prim_thr <- (range(na.omit(prim_den))[2] - range(na.omit(prim_den))[1]) / 2
-prim_pred <- cbind(test, den = prim_den) %>% # check if cbind() works like this
-  select(c(cell_id, test, den)) %>% 
-  mutate(pred = ifelse(den > prim_thr, 1, 0),
-         pred = factor(pred, levels = c(0,1), labels = c("Unharmed", "Incident")))
-head(prim_pred)
-names(prim_pred) <- c('cell_id', 'truth', 'density', 'prediction')
-table(prim_pred %>% select(- c(cell_id, density)), useNA = 'ifany')
-
-
-# accuracy
-metrics(prim_pred, truth, prediction)
-confusionMatrix(prim_pred$prediction, reference = prim_pred$truth, positive = 'Incident')
-# manually save the information
-
-# number of NAs in status quo predictions on the test set
-dim(na.omit(test_pred))[1] - dim(na.omit(prim_pred))[1]
 
 
 #------------------------------------------------------------
@@ -294,6 +307,50 @@ hist_f <- function(variable){
 hist_f(elevation_m)
 
 
+
+# mapping the likelihood and prediction map in leaflet
+
+obscolor <- c("#040404B3","#080918B3","#0E0D24B3","#150F2EB3","#1D1135B3","#24123CB3","#2C1242B3","#341348B3","#3C134EB3","#451353B3","#4D1259B3",
+              "#56125DB3","#5F1162B3","#681066B3","#701069B3","#79106DB3","#82106FB3","#8A1172B3","#931373B3","#9B1674B3","#A31A75B3","#AB1E75B3",
+              "#B32375B3","#BA2973B3","#C12F71B3","#C8356FB3","#CF3B6BB3","#D64267B3","#DC4962B3","#E2505BB3","#E85752B3","#ED5F48B3","#F2673AB3",
+              "#F37133B3","#F47B2CB3","#F58426B3","#F58E23B3","#F69622B3","#F79F25B3","#F7A82CB3","#F7B134B3","#F8B93EB3","#F8C149B3","#F8CA54B3",
+              "#F9D25FB3","#F9DB6BB3","#FAE377B3","#FBEC84B3","#FDF490B3","#FFFE9EB3")
+
+pal_lik <- colorNumeric(palette = obscolor, domain = values(out$likelihood),
+  na.color = 'transparent')
+
+pal_lik_rev <- colorNumeric(palette = obscolor, domain = values(out$likelihood), 
+  reverse = TRUE, na.color = 'transparent')
+
+pal_pred <- colorFactor(palette = c('springgreen4', 'seagreen3', 'indianred1', 'red'),
+  domain = values(out$prediction), na.color = 'transparent')
+
+pal_pred(c(1,2,3,4))
+
+library(leaflet)
+map <- leaflet() %>% 
+  addTiles() %>% 
+  addRasterImage(out$likelihood, group = 'likelihood', colors = pal_lik, opacity = 0.75) %>% 
+  addLegend(pal = pal_lik_rev, values = values(out$likelihood),
+            labFormat = labelFormat(transform = function(x) sort(x, decreasing = TRUE)),
+            title = "Probability", group = 'likelihood') %>% 
+  addRasterImage(out$prediction, group = 'prediction', opacity = 0.75, 
+                 colors = c("#008B45", "#43CD80", "#FF6A6A", "#FF0000")) %>%  # 'springgreen4', 'seagreen3', 'indianred1', 'red'
+  addLegend(colors = c("#008B45", "#43CD80", "#FF6A6A", "#FF0000"),
+            labels = c('very unlikely', 'unlikely', 'likely', 'very likely'),
+            title = "Incident", group = 'prediction') %>%
+  addLayersControl(
+    overlayGroups = c("likelihood", "prediction"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>% 
+  hideGroup('prediction') %>% 
+  addScaleBar(
+    position = c("bottomleft"),
+    options = scaleBarOptions()
+  )
+map
+
+
 # JUNK:
 # # check relation elevation ~ charcoaling probability
 # train$elevation_bin <- ifelse(train$elevation_m>400,
@@ -309,3 +366,4 @@ hist_f(elevation_m)
 #   
 # plot(baked_train$elevation_m, preds$.pred_Incident)
 # plot(baked_train$dwater, preds$.pred_Incident)
+
